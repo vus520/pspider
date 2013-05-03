@@ -108,21 +108,26 @@ class UrlTableMySQL extends mysqli implements UrlTable
 		$sql .= 'WHERE select_time < ' . ($now - $duration) . ' '; // expired
 		$sql .= 'OR (select_time > update_time AND select_time < ' . ($now - 300) . ') '; // failed
 		$sql .= 'ORDER BY score DESC LIMIT ' . intval($limit);
+		($fd = @fopen(sys_get_temp_dir() . DIRECTORY_SEPARATOR . __CLASS__ . '.lock', 'w')) && flock($fd, LOCK_EX);
 		if (($res = $this->query($sql)) === false)
-			return false;
-		$ret = $ids = array();
-		while ($row = $res->fetch_assoc())
+			$ret = false;
+		else
 		{
-			$ids[] = $row['id'];
-			$ret[] = $row['url'];
+			$ret = $ids = array();
+			while ($row = $res->fetch_assoc())
+			{
+				$ids[] = $row['id'];
+				$ret[] = $row['url'];
+			}
+			$res->free();
+			if (count($ids) > 0)
+			{
+				$sql = 'UPDATE ' . $this->_table . ' SET select_time = ' . $now . ' ';
+				$sql .= 'WHERE id IN (\'' . implode('\', \'', $ids) . '\')';
+				$this->query($sql);
+			}
 		}
-		$res->free();
-		if (count($ids) > 0)
-		{
-			$sql = 'UPDATE ' . $this->_table . ' SET select_time = ' . $now . ' ';
-			$sql .= 'WHERE id IN (\'' . implode('\', \'', $ids) . '\')';
-			$this->query($sql);
-		}
+		$fd && flock($fd, LOCK_UN) && fclose($fd);
 		return $ret;
 	}
 
@@ -422,7 +427,7 @@ class UrlParser implements HttpParser
 		$pos2 = strpos($url, '/', $pos1);
 		$domain = $pos2 === false ? substr($url, $pos1) : substr($url, $pos1, $pos2 - $pos1);
 		// external domain
-		if ($rawUrl !== null && !strstr($rawUrl, $domain))
+		if ($rawUrl !== null && !@strstr($rawUrl, $domain))
 		{
 			// disallow domain
 			if ($this->_followExternal && $this->isMatchRule($this->_disallowDomain, $domain))
@@ -459,6 +464,8 @@ class UrlParser implements HttpParser
 	public function resetUrl($url, $baseUrl = null)
 	{
 		// 开头处理
+		if (!strncasecmp($url, 'http://http://', 14))
+			$url = substr($url, 7);
 		if (strncasecmp($url, 'http://', 7) && strncasecmp($url, 'https://', 8))
 		{
 			if ($baseUrl === null)
@@ -467,18 +474,18 @@ class UrlParser implements HttpParser
 			{
 				if (substr($url, 0, 1) === '/')
 				{
-					$pos = strpos($baseUrl, '/', 8);
+					$pos = @strpos($baseUrl, '/', 8);
 					$url = ($pos === false ? $baseUrl : substr($baseUrl, 0, $pos)) . $url;
 				}
 				else
 				{
-					$pos = strrpos($baseUrl, '/', 8);
+					$pos = @strrpos($baseUrl, '/', 8);
 					$url = ($pos === false ? $baseUrl . '/' : substr($baseUrl, 0, $pos + 1)) . $url;
 				}
 			}
 		}
 		// 统一 URL 格式，顶级网址以 / 结尾，去除 # 后的锚点
-		if (strpos($url, '/', 8) === false)
+		if (@strpos($url, '/', 8) === false)
 			$url .= '/';
 		if (($pos = strrpos($url, '#')) !== false)
 			$url = substr($url, 0, $pos);
